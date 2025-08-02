@@ -1,0 +1,112 @@
+# GitHub Actions Workflow for Automatic Dependency Updates
+# This workflow checks for and updates dependencies weekly
+
+name: Update Dependencies
+
+# When to run this workflow
+on:
+  # Runs weekly on Sundays at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * 0'
+  
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Use a personal access token for authenticated pushes
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      # Step 2: Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      # Step 3: Install npm-check-updates globally
+      - name: Install npm-check-updates
+        run: npm install -g npm-check-updates
+      
+      # Step 4: Check for outdated packages
+      - name: Check for updates
+        id: check-updates
+        run: |
+          echo "Checking for outdated packages..."
+          ncu --jsonUpgraded > updates.json
+          if [ -s updates.json ]; then
+            echo "updates-available=true" >> $GITHUB_OUTPUT
+            echo "Updates available:"
+            cat updates.json
+          else
+            echo "updates-available=false" >> $GITHUB_OUTPUT
+            echo "No updates available"
+          fi
+      
+      # Step 5: Update dependencies if updates are available
+      - name: Update dependencies
+        if: steps.check-updates.outputs.updates-available == 'true'
+        run: |
+          echo "Updating dependencies..."
+          ncu -u
+          npm install
+      
+      # Step 6: Run tests to ensure updates don't break anything
+      - name: Run build test
+        if: steps.check-updates.outputs.updates-available == 'true'
+        run: |
+          echo "Testing build after updates..."
+          npm run build
+      
+      # Step 7: Create pull request with updates
+      - name: Create Pull Request
+        if: steps.check-updates.outputs.updates-available == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: update dependencies'
+          committer: GitHub Actions <actions@github.com>
+          author: GitHub Actions <actions@github.com>
+          title: '🔄 Automatic Dependency Updates'
+          body: |
+            ## 🔄 Automatic Dependency Updates
+            
+            This PR contains automatic updates to package dependencies.
+            
+            ### Changes Made:
+            - Updated outdated npm packages to their latest versions
+            - Build test passed successfully
+            
+            ### Updated Packages:
+            ```json
+            $(cat updates.json)
+            ```
+            
+            ### What to do:
+            1. Review the changes carefully
+            2. Test the application locally if needed
+            3. Merge this PR if everything looks good
+            
+            ---
+            *This PR was created automatically by GitHub Actions*
+          branch: dependency-updates
+          delete-branch: true
+      
+      # Step 8: Output summary
+      - name: Summary
+        run: |
+          if [ "${{ steps.check-updates.outputs.updates-available }}" == "true" ]; then
+            echo "✅ Dependencies updated and PR created"
+          else
+            echo "ℹ️ No dependency updates needed"
+          fi
